@@ -61,6 +61,12 @@ public:
 TEST(Rosbag2PlayerTest, memory_corruption_in_player_class) {
   rclcpp::init(0, nullptr);
 
+#ifndef NDEBUG
+  std::cout << "from test: #ifndef NDEBUG" << std::endl;
+#else
+  std::cout << "from test: #ifdef NDEBUG" << std::endl;
+#endif
+
   std::cout << "from test: sizeof(Player) = " << sizeof(Player) << std::endl;
   std::cout << "from test: sizeof(DebugPlayer) = " << sizeof(DebugPlayer) << std::endl;
 

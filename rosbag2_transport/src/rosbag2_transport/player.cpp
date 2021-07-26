@@ -82,6 +82,13 @@ DebugPlayer::DebugPlayer(const std::string & node_name)  // ,
 // : rclcpp::Node(node_name, node_options)
 {
   (void)node_name;
+
+#ifndef NDEBUG
+  std::cout << "#ifndef NDEBUG" << std::endl;
+#else
+  std::cout << "#ifdef NDEBUG" << std::endl;
+#endif
+
   std::cout << "sizeof(SerializedBagMessage) = " <<
     sizeof(rosbag2_storage::SerializedBagMessage) << std::endl;
 
