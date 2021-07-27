@@ -1,0 +1,518 @@
+diff --git a/README.md b/README.md
+index 928a471..3971ded 100644
+--- a/README.md
++++ b/README.md
+@@ -1,44 +1,39 @@
++# What's new with this fork
++
++Feature to replay bag file with current time as time stamper
++
+ # rosbag2
+ 
+ Repository for implementing rosbag2 as described in its corresponding [design article](https://github.com/ros2/design/blob/f69fbbd11848e3dd6866b71a158a1902e31e92f1/articles/rosbags.md).
+ 
+ ## Installation instructions
+ 
+-## Debian packages
+-
+-rosbag2 packages are available via debian packages and thus can be installed via
+-
+-```
+-$ export CHOOSE_ROS_DISTRO=crystal # rosbag2 is available starting from crystal
+-$ sudo apt-get install ros-$CHOOSE_ROS_DISTRO-ros2bag* ros-$CHOOSE_ROS_DISTRO-rosbag2*
+-```
+-
+-For other platforms than Linux, rosbag2 has to be built from source as it's currently not part of the latest [ros2.repos file](https://github.com/ros2/ros2/blob/master/ros2.repos).
++### Requirements:
+ 
+-## Build from source
++- Ubuntu 18.04.5 LTS
++- ROS2 Eloquent
++- Active internet connection to build these packages
+ 
+-It is recommended to create a new overlay workspace on top of your current ROS 2 installation.
++### Create ROS2 Workspace:
+ 
+-```
+-$ mkdir -p ~/rosbag_ws/src
+-$ cd ~/rosbag_ws/src
++```shell
++cd ~
++mkdir -p ros2_worskpace/src
++echo "source ~/ros2_workspace/install/setup.bash" >> ~/.bashrc
++source ~/.bashrc
+ ```
+ 
+-Clone this repository into the source folder:
++### Build custom rosbag2 packages:
+ 
+-```
+-$ git clone https://github.com/ros2/rosbag2.git
++```shell
++cd ~/ros2_workspace/src
++git clone -b eloquent https://github.com/ros2/rosbag2.git
++cd ..
++colcon build --symlink-install
++source ~/.bashrc
+ ```
+ 
+-Then build all the packages with this command:
+-
+-```
+-$ colcon build [--merge-install]
+-```
+-
+-The `--merge-install` flag is optional and installs all packages into one folder rather than isolated folders for each package.
+-
+-#### Executing tests
++## Executing tests
+ 
+ The tests can be run using the following commands:
+ 
+@@ -91,6 +86,14 @@ After recording data, the next logical step is to replay this data:
+ $ ros2 bag play <bag_file>
+ ```
+ 
++To play the rosbag file with current time as the time stamper:
++
++```
++$ ros2 bag play -c <bag_file>
++```
++
++This timestamp feature works with multiple types of message as long as the header is at a depth level of 0 (msg.header) such as messages defined in sensor_msgs and geometry_msgs. In particular, this does not work with tf/tfMessage messages because headers are at a depth level of 1 (msg.transforms.header).
++
+ The bag file is by default set to the folder name where the data was previously recorded in.
+ 
+ ### Analyzing data
+diff --git a/ros2bag/ros2bag/verb/play.py b/ros2bag/ros2bag/verb/play.py
+index e5dd736..3af395f 100644
+--- a/ros2bag/ros2bag/verb/play.py
++++ b/ros2bag/ros2bag/verb/play.py
+@@ -27,6 +27,9 @@ class PlayVerb(VerbExtension):
+         parser.add_argument(
+             '-s', '--storage', default='sqlite3',
+             help='storage identifier to be used, defaults to "sqlite3"')
++        parser.add_argument(
++            '-c', '--current', action='store_true',
++            help='determine if current system time will be set in Header time stamper')
+         parser.add_argument(
+             '-r', '--read-ahead-queue-size', type=int, default=1000,
+             help='size of message queue rosbag tries to hold in memory to help deterministic '
+@@ -46,5 +49,6 @@ class PlayVerb(VerbExtension):
+         rosbag2_transport_py.play(
+             uri=bag_file,
+             storage_id=args.storage,
++            use_current_time=args.current,
+             node_prefix=NODE_NAME_PREFIX,
+             read_ahead_queue_size=args.read_ahead_queue_size)
+diff --git a/rosbag2/src/rosbag2/converter.cpp b/rosbag2/src/rosbag2/converter.cpp
+index ec52837..fcc39cb 100644
+--- a/rosbag2/src/rosbag2/converter.cpp
++++ b/rosbag2/src/rosbag2/converter.cpp
+@@ -19,6 +19,7 @@
+ #include <string>
+ #include <utility>
+ #include <vector>
++#include <iostream>
+ 
+ #include "rosbag2_storage/metadata_io.hpp"
+ #include "rosbag2/info.hpp"
+@@ -68,10 +69,9 @@ std::shared_ptr<SerializedBagMessage> Converter::convert(
+   auto ts = topics_and_types_.at(message->topic_name).rmw_type_support;
+   auto introspection_ts = topics_and_types_.at(message->topic_name).introspection_type_support;
+   auto allocator = rcutils_get_default_allocator();
+-  std::shared_ptr<rosbag2_introspection_message_t> allocated_ros_message =
+-    allocate_introspection_message(introspection_ts, &allocator);
+-
++  std::shared_ptr<rosbag2_introspection_message_t> allocated_ros_message = allocate_introspection_message(introspection_ts, &allocator);
+   input_converter_->deserialize(message, ts, allocated_ros_message);
++  
+   auto output_message = std::make_shared<rosbag2::SerializedBagMessage>();
+   output_message->serialized_data = rosbag2_storage::make_empty_serialized_message(0);
+   output_converter_->serialize(allocated_ros_message, ts, output_message);
+diff --git a/rosbag2/src/rosbag2/writers/sequential_writer.cpp b/rosbag2/src/rosbag2/writers/sequential_writer.cpp
+index 1bec056..27eb843 100644
+--- a/rosbag2/src/rosbag2/writers/sequential_writer.cpp
++++ b/rosbag2/src/rosbag2/writers/sequential_writer.cpp
+@@ -191,7 +191,7 @@ void SequentialWriter::write(std::shared_ptr<SerializedBagMessage> message)
+ 
+   const auto message_timestamp = std::chrono::time_point<std::chrono::high_resolution_clock>(
+     std::chrono::nanoseconds(message->time_stamp));
+-  metadata_.starting_time = std::min(metadata_.starting_time, message_timestamp);
++  metadata_.starting_time = std::min(metadata_.starting_time, message_timestamp);  
+ 
+   const auto duration = message_timestamp - metadata_.starting_time;
+   metadata_.duration = std::max(metadata_.duration, duration);
+diff --git a/rosbag2_transport/include/rosbag2_transport/play_options.hpp b/rosbag2_transport/include/rosbag2_transport/play_options.hpp
+index bcf113e..c1fe0fe 100644
+--- a/rosbag2_transport/include/rosbag2_transport/play_options.hpp
++++ b/rosbag2_transport/include/rosbag2_transport/play_options.hpp
+@@ -26,6 +26,7 @@ struct PlayOptions
+ public:
+   size_t read_ahead_queue_size;
+   std::string node_prefix = "";
++  bool use_current_time = false;
+ };
+ 
+ }  // namespace rosbag2_transport
+diff --git a/rosbag2_transport/src/rosbag2_transport/player.cpp b/rosbag2_transport/src/rosbag2_transport/player.cpp
+index e2147d4..b488a65 100644
+--- a/rosbag2_transport/src/rosbag2_transport/player.cpp
++++ b/rosbag2_transport/src/rosbag2_transport/player.cpp
+@@ -55,6 +55,10 @@ bool Player::is_storage_completely_loaded() const
+ void Player::play(const PlayOptions & options)
+ {
+   prepare_publishers();
++  
++  if(options.use_current_time) {
++    prepare_topic_ts_map();
++  }
+ 
+   storage_loading_future_ = std::async(std::launch::async,
+       [this, options]() {load_storage_content(options);});
+@@ -64,6 +68,30 @@ void Player::play(const PlayOptions & options)
+   play_messages_from_queue();
+ }
+ 
++void Player::prepare_topic_ts_map()
++{
++  auto topics = reader_->get_all_topics_and_types();
++
++  for (const auto & topic : topics){
++      auto type_support = rosbag2::get_typesupport(topic.type, "rosidl_typesupport_introspection_cpp");
++      auto msg_members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(type_support->data);
++
++      const rosidl_typesupport_introspection_cpp::MessageMember *msg_member_ptr = msg_members->members_;
++      auto msg_member_count = msg_members->member_count_;
++      for (unsigned int i = 0;i < msg_member_count;i++) {
++          if(strcmp(msg_member_ptr[i].name_, "header") == 0)
++          {
++            HeaderSupportStruct header_support;
++            header_support.stop_index = i;
++            header_support.msg_member_ptr = msg_member_ptr;
++            topics_ts_map_.insert(std::make_pair(topic.name, header_support));
++            break;
++          }
++      }
++  }
++
++}
++
+ void Player::wait_for_filled_queue(const PlayOptions & options) const
+ {
+   while (
+@@ -81,6 +109,7 @@ void Player::load_storage_content(const PlayOptions & options)
+   ReplayableMessage message;
+   if (reader_->has_next()) {
+     message.message = reader_->read_next();
++
+     message.time_since_start = std::chrono::nanoseconds(0);
+     time_first_message = TimePoint(std::chrono::nanoseconds(message.message->time_stamp));
+     message_queue_.enqueue(message);
+@@ -107,9 +136,8 @@ void Player::enqueue_up_to_boundary(const TimePoint & time_first_message, uint64
+       break;
+     }
+     message.message = reader_->read_next();
+-    message.time_since_start =
+-      TimePoint(std::chrono::nanoseconds(message.message->time_stamp)) - time_first_message;
+ 
++    message.time_since_start = TimePoint(std::chrono::nanoseconds(message.message->time_stamp)) - time_first_message;
+     message_queue_.enqueue(message);
+   }
+ }
+@@ -126,17 +154,178 @@ void Player::play_messages_from_queue()
+   } while (!is_storage_completely_loaded() && rclcpp::ok());
+ }
+ 
++unsigned long alignment(unsigned long data_size, unsigned long last_data_size, unsigned long current_position)
++{
++  return data_size > last_data_size ? (data_size - current_position % data_size) & (data_size-1):0;
++}
++
+ void Player::play_messages_until_queue_empty()
+ {
+   ReplayableMessage message;
+   while (message_queue_.try_dequeue(message) && rclcpp::ok()) {
+     std::this_thread::sleep_until(start_time_ + message.time_since_start);
++
++    auto it = topics_ts_map_.find(message.message->topic_name);
++    if (it != topics_ts_map_.end() ) {
++      builtin_interfaces::msg::Time ros_time_to_set;
++
++      std::chrono::time_point<std::chrono::high_resolution_clock> time_to_be_set = start_time_ + message.time_since_start;
++
++      auto offset_index = it->second.stop_index;
++      const rosidl_typesupport_introspection_cpp::MessageMember * msg_ptr = it->second.msg_member_ptr;
++
++      std::chrono::duration_cast<std::chrono::nanoseconds>(time_to_be_set.time_since_epoch());
++
++      ros_time_to_set.sec = static_cast<int32_t>(floor(time_to_be_set.time_since_epoch().count()/1e9));
++      ros_time_to_set.nanosec = static_cast<uint32_t>(round(time_to_be_set.time_since_epoch().count() - ros_time_to_set.sec*1e9));
++
++      //memcpy
++      uint8_t * buffer_temp = message.message->serialized_data->buffer;
++      dds_buffer_ptr_ = message.message->serialized_data->buffer;
++      calculate_position_with_align(dds_buffer_ptr_, msg_ptr, offset_index);
++      size_t header_time_sec_size = sizeof (int32_t);
++      unsigned long last_offset = alignment(header_time_sec_size, last_data_size_, current_position_);
++      current_position_ += last_offset;
++      buffer_temp = buffer_temp + current_position_ + 4;
++
++      memcpy(buffer_temp, &ros_time_to_set, sizeof(builtin_interfaces::msg::Time));
++
++      current_position_ = 0;
++      last_data_size_ = ULONG_MAX;
++    }
++
+     if (rclcpp::ok()) {
+       publishers_[message.message->topic_name]->publish(message.message->serialized_data);
+     }
+   }
+ }
+ 
++void Player::calculate_position_with_align(const uint8_t * dds_buffer_ptr, const rosidl_typesupport_introspection_cpp::MessageMember *message_member, unsigned long stop_index)
++{
++  unsigned long one_offset = 0;
++  unsigned long data_size = 0;
++
++  for (unsigned int i = 0; i < stop_index; i++) {
++    bool is_string = false;
++    bool is_wstring = false;
++    bool is_ros_msg_type = false;
++    const rosidl_typesupport_introspection_cpp::MessageMembers * sub_members;
++    switch (message_member[i].type_id_) {
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL:
++        data_size = sizeof(bool);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_BYTE:
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
++        data_size = sizeof (uint8_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
++        data_size = sizeof (char);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT:
++        data_size = sizeof (float);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT64:
++        data_size = sizeof (uint64_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
++        data_size = sizeof (int16_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
++        data_size = sizeof (uint16_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
++        data_size = sizeof (int32_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
++        data_size = sizeof (uint32_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
++        data_size = sizeof (int64_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
++        data_size = sizeof (uint64_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_LONG_DOUBLE:
++        data_size = 8;
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
++        deal_with_string(dds_buffer_ptr, is_wstring);
++        is_string = true;
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_WCHAR:
++        data_size = sizeof(uint16_t);
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
++        deal_with_string(dds_buffer_ptr, is_wstring);
++        is_wstring = true;
++        break;
++      case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE:
++        sub_members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(message_member[i].members_->data);
++        calculate_position_with_align(dds_buffer_ptr, sub_members->members_, sub_members->member_count_);
++        is_ros_msg_type = true;
++        break;
++      }
++    //standard element
++    if(!is_string && !is_wstring && !is_ros_msg_type && !message_member[i].is_array_)
++      {
++        one_offset = alignment(data_size, last_data_size_, current_position_);
++        current_position_ += (one_offset + data_size);
++        last_data_size_ = data_size;
++      }
++    //standard array
++    else if(!is_string && !is_wstring && !is_ros_msg_type && message_member[i].is_array_)
++      {
++        for (uint j = 0;j < message_member[i].array_size_; j++) {
++          one_offset = alignment(data_size, last_data_size_, current_position_);
++          current_position_ += (one_offset + data_size);
++          last_data_size_ = data_size;
++        }
++      }
++    //array of string
++    else if (is_string && !is_wstring && !is_ros_msg_type && message_member[i].is_array_)
++      {
++        for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
++          deal_with_string(dds_buffer_ptr, false);
++        }
++      }
++    //array of wstring
++    else if (is_wstring && !is_string && !is_ros_msg_type && message_member[i].is_array_)
++      {
++        for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
++          deal_with_string(dds_buffer_ptr, true);
++        }
++      }
++    else if (is_ros_msg_type && !is_string && !is_wstring && message_member[i].is_array_)
++      {
++        for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
++          calculate_position_with_align(dds_buffer_ptr, sub_members->members_, sub_members->member_count_);
++        }
++      }
++  }
++
++}
++
++void Player::deal_with_string(const uint8_t *dds_buffer, bool is_wstring)
++{
++  uint32_t length;
++  size_t string_header = sizeof(uint32_t);
++
++  unsigned long one_offset = alignment(string_header, last_data_size_, current_position_);
++  current_position_ = current_position_ + one_offset;
++  memcpy(&length, (dds_buffer + current_position_ + 4), string_header);
++
++  if(!is_wstring)
++    {
++      last_data_size_ = sizeof(char);
++      current_position_ += (string_header + length);
++    }
++  else {
++      last_data_size_ = sizeof(uint32_t);
++      current_position_ += (string_header + length * sizeof(uint32_t));
++  }
++}
++
+ void Player::prepare_publishers()
+ {
+   auto topics = reader_->get_all_topics_and_types();
+diff --git a/rosbag2_transport/src/rosbag2_transport/player.hpp b/rosbag2_transport/src/rosbag2_transport/player.hpp
+index bfced3d..50ab24f 100644
+--- a/rosbag2_transport/src/rosbag2_transport/player.hpp
++++ b/rosbag2_transport/src/rosbag2_transport/player.hpp
+@@ -16,6 +16,9 @@
+ #define ROSBAG2_TRANSPORT__PLAYER_HPP_
+ 
+ #include <chrono>
++#include <climits>
++#include <cmath>
++#include <cstring>
+ #include <future>
+ #include <memory>
+ #include <queue>
+@@ -23,9 +26,17 @@
+ #include <unordered_map>
+ 
+ #include "moodycamel/readerwriterqueue.h"
+-#include "replayable_message.hpp"
+-#include "rosbag2/types.hpp"
++
+ #include "rosbag2_transport/play_options.hpp"
++#include "rosbag2_node.hpp"
++
++#include "rosbag2/types.hpp"
++#include "rosidl_typesupport_cpp/message_type_support.hpp"
++#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
++#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
++#include "rosidl_typesupport_introspection_c/message_introspection.h"
++
++#include "replayable_message.hpp"
+ 
+ using TimePoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
+ 
+@@ -37,6 +48,11 @@ class Reader;
+ namespace rosbag2_transport
+ {
+ 
++typedef struct{
++    int stop_index;
++    const rosidl_typesupport_introspection_cpp::MessageMember * msg_member_ptr;
++}HeaderSupportStruct;
++
+ class GenericPublisher;
+ class Rosbag2Node;
+ 
+@@ -57,8 +73,14 @@ private:
+   void play_messages_from_queue();
+   void play_messages_until_queue_empty();
+   void prepare_publishers();
++  void prepare_topic_ts_map();
++  void calculate_position_with_align(const uint8_t * dds_buffer, const rosidl_typesupport_introspection_cpp::MessageMember *message_member, unsigned long stop_index);
++  void deal_with_string(const uint8_t * dds_buffer, bool is_wstring);
+ 
+   static constexpr double read_ahead_lower_bound_percentage_ = 0.9;
++  size_t last_data_size_ = ULONG_MAX;
++  unsigned long current_position_ = 0;
++  uint8_t *dds_buffer_ptr_;
+   static const std::chrono::milliseconds queue_read_wait_period_;
+ 
+   std::shared_ptr<rosbag2::Reader> reader_;
+@@ -67,6 +89,7 @@ private:
+   mutable std::future<void> storage_loading_future_;
+   std::shared_ptr<Rosbag2Node> rosbag2_transport_;
+   std::unordered_map<std::string, std::shared_ptr<GenericPublisher>> publishers_;
++  std::unordered_map<std::string, HeaderSupportStruct> topics_ts_map_;
+ };
+ 
+ }  // namespace rosbag2_transport
+diff --git a/rosbag2_transport/src/rosbag2_transport/rosbag2_transport_python.cpp b/rosbag2_transport/src/rosbag2_transport/rosbag2_transport_python.cpp
+index a52b037..81374c4 100644
+--- a/rosbag2_transport/src/rosbag2_transport/rosbag2_transport_python.cpp
++++ b/rosbag2_transport/src/rosbag2_transport/rosbag2_transport_python.cpp
+@@ -106,6 +106,7 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
+     "uri",
+     "storage_id",
+     "node_prefix",
++    "use_current_time",
+     "read_ahead_queue_size",
+     nullptr
+   };
+@@ -113,11 +114,13 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
+   char * uri;
+   char * storage_id;
+   char * node_prefix;
++  bool use_current_time = false;
+   size_t read_ahead_queue_size;
+-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sss|k", const_cast<char **>(kwlist),
++  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sss|bk", const_cast<char **>(kwlist),
+     &uri,
+     &storage_id,
+     &node_prefix,
++    &use_current_time,
+     &read_ahead_queue_size))
+   {
+     return nullptr;
+@@ -128,6 +131,7 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
+ 
+   play_options.node_prefix = std::string(node_prefix);
+   play_options.read_ahead_queue_size = read_ahead_queue_size;
++  play_options.use_current_time = use_current_time;
+ 
+   rosbag2_transport::Rosbag2Transport transport;
+   transport.init();
+@@ -140,10 +144,12 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
+ static PyObject *
+ rosbag2_transport_info(PyObject * Py_UNUSED(self), PyObject * args, PyObject * kwargs)
+ {
++  rosbag2_transport::PlayOptions play_options{};
+   static const char * kwlist[] = {"uri", "storage_id", nullptr};
+ 
+   char * char_uri;
+   char * char_storage_id;
++
+   if (!PyArg_ParseTupleAndKeywords(
+       args, kwargs, "ss", const_cast<char **>(kwlist), &char_uri, &char_storage_id))
+   {
