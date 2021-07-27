@@ -1,3 +1,5 @@
+Original repository: https://github.com/ros2/rosbag2.git | See rosbag2.patch
+
 # What's new with this fork
 
 Feature to replay bag file with current time as time stamper
