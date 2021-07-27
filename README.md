@@ -1,4 +1,4 @@
-Original repository: https://github.com/ros2/rosbag2.git | See rosbag2.patch
+Original repository: https://github.com/ros2/rosbag2/tree/eloquent | See rosbag2.patch
 
 # What's new with this fork
 
@@ -14,7 +14,7 @@ Repository for implementing rosbag2 as described in its corresponding [design ar
 
 - Ubuntu 18.04.5 LTS
 - ROS2 Eloquent
-- Active internet connection to build these packages
+- Active internet connection to build packages
 
 ### Create ROS2 Workspace:
 
@@ -25,14 +25,34 @@ echo "source ~/ros2_workspace/install/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
+## Set proxy
+
+```bash
+export http_proxy="http://defra1c-proxy.emea.nsn-net.net:8080"
+export https_proxy="http://defra1c-proxy.emea.nsn-net.net:8080"
+export ftp_proxy="http://defra1c-proxy.emea.nsn-net.net:8080"
+echo "Acquire::http::proxy \"http://defra1c-proxy.emea.nsn-net.net:8080/\";" | sudo tee /etc/apt/apt.conf
+git config --global http.proxy http://defra1c-proxy.emea.nsn-net.net:8080
+```
+
 ### Build custom rosbag2 packages:
 
 ```shell
 cd ~/ros2_workspace/src
-git clone -b eloquent https://github.com/ros2/rosbag2.git
+git clone https://gitlabe2.ext.net.nokia.com/kassamal/rosbag2.git
 cd ..
 colcon build --symlink-install
 source ~/.bashrc
+```
+
+## Unset proxy
+
+```bash
+export http_proxy=""
+export https_proxy=""
+export ftp_proxy=""
+echo "Acquire::http::proxy \"\";" | sudo tee /etc/apt/apt.conf
+git config --global --unset http.proxy
 ```
 
 ## Executing tests
