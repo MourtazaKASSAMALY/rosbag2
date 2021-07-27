@@ -16,6 +16,9 @@
 #define ROSBAG2_TRANSPORT__PLAYER_HPP_
 
 #include <chrono>
+#include <climits>
+#include <cmath>
+#include <cstring>
 #include <future>
 #include <memory>
 #include <queue>
@@ -23,9 +26,17 @@
 #include <unordered_map>
 
 #include "moodycamel/readerwriterqueue.h"
-#include "replayable_message.hpp"
-#include "rosbag2/types.hpp"
+
 #include "rosbag2_transport/play_options.hpp"
+#include "rosbag2_node.hpp"
+
+#include "rosbag2/types.hpp"
+#include "rosidl_typesupport_cpp/message_type_support.hpp"
+#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
+#include "rosidl_typesupport_introspection_c/message_introspection.h"
+
+#include "replayable_message.hpp"
 
 using TimePoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
@@ -36,6 +47,11 @@ class Reader;
 
 namespace rosbag2_transport
 {
+
+typedef struct{
+    int stop_index;
+    const rosidl_typesupport_introspection_cpp::MessageMember * msg_member_ptr;
+}HeaderSupportStruct;
 
 class GenericPublisher;
 class Rosbag2Node;
@@ -57,8 +73,14 @@ private:
   void play_messages_from_queue();
   void play_messages_until_queue_empty();
   void prepare_publishers();
+  void prepare_topic_ts_map();
+  void calculate_position_with_align(const uint8_t * dds_buffer, const rosidl_typesupport_introspection_cpp::MessageMember *message_member, unsigned long stop_index);
+  void deal_with_string(const uint8_t * dds_buffer, bool is_wstring);
 
   static constexpr double read_ahead_lower_bound_percentage_ = 0.9;
+  size_t last_data_size_ = ULONG_MAX;
+  unsigned long current_position_ = 0;
+  uint8_t *dds_buffer_ptr_;
   static const std::chrono::milliseconds queue_read_wait_period_;
 
   std::shared_ptr<rosbag2::Reader> reader_;
@@ -67,6 +89,7 @@ private:
   mutable std::future<void> storage_loading_future_;
   std::shared_ptr<Rosbag2Node> rosbag2_transport_;
   std::unordered_map<std::string, std::shared_ptr<GenericPublisher>> publishers_;
+  std::unordered_map<std::string, HeaderSupportStruct> topics_ts_map_;
 };
 
 }  // namespace rosbag2_transport

@@ -1,44 +1,39 @@
+# What's new with this fork
+
+Feature to replay bag file with current time as time stamper
+
 # rosbag2
 
 Repository for implementing rosbag2 as described in its corresponding [design article](https://github.com/ros2/design/blob/f69fbbd11848e3dd6866b71a158a1902e31e92f1/articles/rosbags.md).
 
 ## Installation instructions
 
-## Debian packages
+### Requirements:
 
-rosbag2 packages are available via debian packages and thus can be installed via
+- Ubuntu 18.04.5 LTS
+- ROS2 Eloquent
+- Active internet connection to build these packages
 
-```
-$ export CHOOSE_ROS_DISTRO=crystal # rosbag2 is available starting from crystal
-$ sudo apt-get install ros-$CHOOSE_ROS_DISTRO-ros2bag* ros-$CHOOSE_ROS_DISTRO-rosbag2*
-```
+### Create ROS2 Workspace:
 
-For other platforms than Linux, rosbag2 has to be built from source as it's currently not part of the latest [ros2.repos file](https://github.com/ros2/ros2/blob/master/ros2.repos).
-
-## Build from source
-
-It is recommended to create a new overlay workspace on top of your current ROS 2 installation.
-
-```
-$ mkdir -p ~/rosbag_ws/src
-$ cd ~/rosbag_ws/src
+```shell
+cd ~
+mkdir -p ros2_worskpace/src
+echo "source ~/ros2_workspace/install/setup.bash" >> ~/.bashrc
+source ~/.bashrc
 ```
 
-Clone this repository into the source folder:
+### Build custom rosbag2 packages:
 
-```
-$ git clone https://github.com/ros2/rosbag2.git
-```
-
-Then build all the packages with this command:
-
-```
-$ colcon build [--merge-install]
+```shell
+cd ~/ros2_workspace/src
+git clone -b eloquent https://github.com/ros2/rosbag2.git
+cd ..
+colcon build --symlink-install
+source ~/.bashrc
 ```
 
-The `--merge-install` flag is optional and installs all packages into one folder rather than isolated folders for each package.
-
-#### Executing tests
+## Executing tests
 
 The tests can be run using the following commands:
 
@@ -90,6 +85,14 @@ After recording data, the next logical step is to replay this data:
 ```
 $ ros2 bag play <bag_file>
 ```
+
+To play the rosbag file with current time as the time stamper:
+
+```
+$ ros2 bag play -c <bag_file>
+```
+
+This timestamp feature works with multiple types of message as long as the header is at a depth level of 0 (msg.header) such as messages defined in sensor_msgs and geometry_msgs. In particular, this does not work with tf/tfMessage messages because headers are at a depth level of 1 (msg.transforms.header).
 
 The bag file is by default set to the folder name where the data was previously recorded in.
 
